@@ -1,0 +1,13 @@
+{
+    "exclude": [
+        "storage",
+        "__pycache__",
+        "venv",
+        ".venv",
+        "*.json"
+    ],
+    "ignore": [
+        "storage",
+        "__pycache__"
+    ]
+}

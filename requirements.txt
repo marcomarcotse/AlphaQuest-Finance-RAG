@@ -1,0 +1,13 @@
+llama-index-llms-ollama
+llama-index-embeddings-ollama
+llama-index-readers-file
+llama-index
+streamlit
+python-dotenv
+pandas
+pypdf
+chromadb
+llama-index-vector-stores-chroma
+llama-index-question-gen-openai
+pymupdf
+pymupdf4llm
