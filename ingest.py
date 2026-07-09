@@ -1,149 +1,132 @@
+from __future__ import annotations
+
 import logging
 import sys
-import os
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, StorageContext
+from pathlib import Path
+
+from llama_index.core import Document, Settings, VectorStoreIndex
+from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
-from llama_index.core import Settings
 
-# Setup logging
+from finance_core import FACT_STORE_PATH, build_fact_store, get_file_metadata
+
+
+DATA_DIR = Path("data")
+STORAGE_DIR = Path("storage")
+
+
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
-logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
+logger = logging.getLogger("alphaquest.ingest")
 
-def get_file_metadata(file_path):
-    """
-    Extracts metadata from the filename.
-    Expected format: YYYY-Company-Type.pdf or similar.
-    Example: 2023-Alphabet-10K.pdf
-    """
-    filename = os.path.basename(file_path).lower()
-    metadata = {}
-    
-    # Keyword matching for companies (including tickers)
-    companies_map = {
-        "alphabet": "Alphabet", "google": "Alphabet", "goog": "Alphabet",
-        "amazon": "Amazon", "amzn": "Amazon",
-        "apple": "Apple", "aapl": "Apple",
-        "meta": "Meta", "facebook": "Meta",
-        "microsoft": "Microsoft", "msft": "Microsoft",
-        "nvidia": "Nvidia", "nvda": "Nvidia",
-        "tesla": "Tesla", "tsla": "Tesla"
-    }
-    
-    for key, name in companies_map.items():
-        if key in filename:
-            metadata["company"] = name
-            break
-    else:
-        metadata["company"] = "Unknown"
-        
-    # extract year (4 digits)
-    import re
-    year_match = re.search(r"20\d{2}", filename)
-    if year_match:
-        metadata["year"] = year_match.group(0)
-    else:
-        metadata["year"] = "Unknown"
-        
-    return metadata
 
-def main():
-    # 1. Setup local models via Ollama
+def _page_is_financially_interesting(text: str) -> bool:
+    lower = text.lower()
+    return any(
+        term in lower
+        for term in (
+            "net income",
+            "net earnings",
+            "total net sales",
+            "total revenue",
+            "revenue",
+            "consolidated statements",
+            "income statements",
+            "operations",
+            "research and development",
+            "operating income",
+            "income from operations",
+        )
+    )
+
+
+def load_pdf_documents(data_dir: Path = DATA_DIR) -> list[Document]:
+    try:
+        import fitz
+        import pymupdf4llm
+    except ImportError as exc:
+        raise RuntimeError("PyMuPDF and pymupdf4llm are required for ingestion.") from exc
+
+    documents: list[Document] = []
+    for pdf_path in sorted(data_dir.glob("*.pdf")):
+        logger.info("Converting %s to Markdown", pdf_path.name)
+        try:
+            pdf_doc = fitz.open(pdf_path)
+            pages: list[str] = []
+
+            for page_index, page in enumerate(pdf_doc):
+                page_text = page.get_text()
+                if _page_is_financially_interesting(page_text):
+                    try:
+                        page_markdown = pymupdf4llm.to_markdown(
+                            str(pdf_path),
+                            pages=[page_index],
+                            show_progress=False,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Falling back to plain text for %s page %s",
+                            pdf_path.name,
+                            page_index + 1,
+                        )
+                        page_markdown = page_text
+                else:
+                    page_markdown = page_text
+
+                pages.append(f"<!-- Page {page_index + 1} -->\n{page_markdown}")
+
+            page_count = len(pdf_doc)
+            pdf_doc.close()
+            metadata = get_file_metadata(pdf_path)
+            metadata["file_name"] = pdf_path.name
+            documents.append(Document(text="\n\n".join(pages), metadata=metadata))
+            logger.info(
+                "Loaded %s as %s (%s), %s pages",
+                pdf_path.name,
+                metadata["company"],
+                metadata["year"],
+                page_count,
+            )
+        except Exception:
+            logger.exception("Error processing %s", pdf_path)
+
+    return documents
+
+
+def build_vector_index(documents: list[Document]) -> VectorStoreIndex:
+    logger.info("Creating vector index")
+    node_parser = SentenceSplitter(chunk_size=1024, chunk_overlap=150)
+    nodes = node_parser.get_nodes_from_documents(documents)
+    return VectorStoreIndex(nodes)
+
+
+def main() -> None:
+    if not DATA_DIR.exists() or not any(DATA_DIR.glob("*.pdf")):
+        logger.error("No PDF files found in %s", DATA_DIR)
+        return
+
     Settings.llm = Ollama(model="llama3", request_timeout=120.0)
     Settings.embed_model = OllamaEmbedding(model_name="llama3")
 
-    # 2. Load data with metadata
-    print("Loading documents from ./data with metadata...")
-    if not os.path.exists("./data") or not os.listdir("./data"):
-        print("Error: No files found in ./data directory.")
+    documents = load_pdf_documents(DATA_DIR)
+    if not documents:
+        logger.error("No documents were loaded.")
         return
 
-    # 2. Load data with metadata using PyMuPDF4LLM for Markdown conversion
-    print("Loading documents from ./data with metadata and PyMuPDF4LLM...")
-    if not os.path.exists("./data") or not os.listdir("./data"):
-        print("Error: No files found in ./data directory.")
-        return
+    index = build_vector_index(documents)
+    index.storage_context.persist(persist_dir=str(STORAGE_DIR))
+    logger.info("Index persisted to %s", STORAGE_DIR)
 
-    import pymupdf4llm
-    import pymupdf
-    from llama_index.core import Document
+    facts = build_fact_store(DATA_DIR, FACT_STORE_PATH)
+    logger.info("Financial fact store written to %s (%s facts)", FACT_STORE_PATH, len(facts))
 
-    documents = []
-    data_dir = "./data"
-    
-    for filename in os.listdir(data_dir):
-        file_path = os.path.join(data_dir, filename)
-        if filename.lower().endswith(".pdf"):
-            try:
-                print(f"Converting {filename} to Markdown with enhanced table extraction...")
-                
-                # Open PDF and process page by page for better table capture
-                pdf_doc = pymupdf.open(file_path)
-                all_pages_md = []
-                
-                for page_num in range(len(pdf_doc)):
-                    page = pdf_doc[page_num]
-                    page_text = page.get_text()
-                    
-                    # Check if page likely contains income statement
-                    lower_text = page_text.lower()
-                    is_financial_page = any(term in lower_text for term in [
-                        'net income', 'net earnings', 'consolidated statements',
-                        'operations', 'income statement', 'comprehensive income'
-                    ])
-                    
-                    if is_financial_page:
-                        # Use pymupdf4llm for this page with table extraction
-                        try:
-                            page_md = pymupdf4llm.to_markdown(
-                                file_path, 
-                                pages=[page_num],
-                                show_progress=False
-                            )
-                            all_pages_md.append(f"<!-- Page {page_num + 1} -->\n{page_md}")
-                        except:
-                            all_pages_md.append(f"<!-- Page {page_num + 1} -->\n{page_text}")
-                    else:
-                        # Regular text extraction for non-financial pages
-                        all_pages_md.append(f"<!-- Page {page_num + 1} -->\n{page_text}")
-                
-                num_pages = len(pdf_doc)  # Save before closing
-                pdf_doc.close()
-                md_text = "\n\n".join(all_pages_md)
-                
-                # Extract metadata
-                meta = get_file_metadata(file_path)
-                meta["file_name"] = filename
-                
-                # Create Document
-                doc = Document(text=md_text, metadata=meta)
-                documents.append(doc)
-                print(f"-> Loaded {filename} as {meta['company']} ({meta['year']}) - {num_pages} pages")
-            except Exception as e:
-                print(f"Error processing {filename}: {e}")
-                import traceback
-                traceback.print_exc()
+    try:
+        query_engine = index.as_query_engine(similarity_top_k=4)
+        response = query_engine.query("What is the main business of Alphabet Inc?")
+        logger.info("Smoke test response: %s", response)
+    except Exception:
+        logger.exception("Smoke test failed. The index and fact store were still created.")
 
-    print(f"Loaded {len(documents)} documents (converted to Markdown).")
-
-    # 3. Create Index with better chunking for tables
-    print("Creating index with larger chunks (2048 tokens) for table preservation...")
-    from llama_index.core.node_parser import SentenceSplitter
-    
-    node_parser = SentenceSplitter(chunk_size=2048, chunk_overlap=200)
-    nodes = node_parser.get_nodes_from_documents(documents)
-    
-    index = VectorStoreIndex(nodes)
-
-    # 4. Save Index for later use
-    index.storage_context.persist(persist_dir="./storage")
-    print("Index created and persisted to ./storage")
-
-    # 5. Quick Test
-    query_engine = index.as_query_engine()
-    response = query_engine.query("What is the main business of Alphabet Inc?")
-    print("\nTest Query Response:")
-    print(response)
 
 if __name__ == "__main__":
     main()
