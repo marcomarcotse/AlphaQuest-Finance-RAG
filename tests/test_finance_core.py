@@ -8,6 +8,7 @@ from finance_core import (
     build_fact_store,
     detect_companies,
     detect_metric,
+    load_or_build_facts,
     parse_money_values,
 )
 
@@ -19,6 +20,16 @@ class FinanceCoreUnitTests(unittest.TestCase):
     def test_detect_metric_and_companies(self) -> None:
         self.assertEqual(detect_metric("Compare Apple and Microsoft revenue in 2024"), "revenue")
         self.assertEqual(detect_companies("Compare Apple and Microsoft revenue"), ("Apple", "Microsoft"))
+
+    def test_loads_bundled_facts_when_storage_is_missing(self) -> None:
+        facts = load_or_build_facts(
+            data_dir="missing-data-dir",
+            fact_path="missing-storage/financial_facts.json",
+        )
+        self.assertEqual(len(facts), 112)
+        answer = answer_financial_question("Which company had the highest revenue in 2024?", facts)
+        self.assertEqual(answer.facts[0].company, "Amazon")
+        self.assertEqual(answer.facts[0].value, 637_959)
 
 
 @unittest.skipUnless(Path("data").exists(), "local PDF data is not available")

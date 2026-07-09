@@ -1,0 +1,10 @@
+llama-index
+llama-index-llms-ollama
+llama-index-embeddings-ollama
+llama-index-readers-file
+streamlit
+python-dotenv
+pandas
+pypdf
+pymupdf
+pymupdf4llm

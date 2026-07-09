@@ -176,6 +176,7 @@ COMPARATIVE_TERMS = (
 ASCENDING_TERMS = ("lowest", "smallest", "least", "worst", "bottom", "最低", "最小")
 DESCENDING_TERMS = ("highest", "largest", "biggest", "most", "best", "top", "最高", "最大")
 
+BUNDLED_FACT_STORE_PATH = Path("app_data") / "financial_facts.json"
 FACT_STORE_PATH = Path("storage") / "financial_facts.json"
 _NUMBER_RE = re.compile(r"\(?\s*-?\s*\d{1,3}(?:,\d{3})+\s*\)?|\(?\s*-?\s*\d{4,6}\s*\)?")
 _ASCII_WORD_RE = re.compile(r"\b{}\b")
@@ -487,6 +488,9 @@ def load_or_build_facts(
     facts = load_facts(fact_path)
     if facts:
         return facts
+    bundled_facts = load_facts(BUNDLED_FACT_STORE_PATH)
+    if bundled_facts:
+        return bundled_facts
     return build_fact_store(data_dir=data_dir, output_path=fact_path)
 
 

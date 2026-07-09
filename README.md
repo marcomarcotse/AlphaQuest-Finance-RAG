@@ -5,6 +5,7 @@ AlphaQuest is a local financial filings assistant for the Magnificent Seven. It 
 ## What Changed
 
 - **Deterministic fact store**: extracts company, year, metric, value, source file, page, and statement row into `storage/financial_facts.json`.
+- **Cloud-ready snapshot**: ships a small public demo fact store at `app_data/financial_facts.json`, so the app can run without bundled PDFs, vector storage, or Ollama.
 - **Better metric support**: handles revenue, net income, operating income, and R&D / technology expense.
 - **Correct total-row extraction**: avoids treating category rows like `Revenue:` or `Revenues` as totals when a `Total revenue(s)` row exists.
 - **Company-specific filing logic**: maps Nvidia's January fiscal year to the project year used by the local PDF filenames.
@@ -27,9 +28,8 @@ AlphaQuest is a local financial filings assistant for the Magnificent Seven. It 
 ## Tech Stack
 
 - **App**: Streamlit
-- **RAG**: LlamaIndex
-- **LLM**: Llama 3 via Ollama
-- **Embeddings**: Ollama embeddings
+- **Public demo mode**: Streamlit + bundled financial facts
+- **Local RAG mode**: LlamaIndex, Llama 3 via Ollama, Ollama embeddings
 - **PDF extraction**: PyMuPDF and PyMuPDF4LLM
 - **Tests**: Python `unittest`
 
@@ -39,6 +39,14 @@ AlphaQuest is a local financial filings assistant for the Magnificent Seven. It 
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
+```
+
+The public app only needs `streamlit` because it uses the committed fact snapshot in `app_data/`.
+
+For local PDF ingestion and optional RAG fallback, install the full pipeline dependencies:
+
+```bash
+pip install -r requirements-ingest.txt
 ollama pull llama3
 ```
 
@@ -60,6 +68,12 @@ This creates:
 - `storage/default__vector_store.json` and related LlamaIndex files
 - `storage/financial_facts.json`
 
+To refresh the public demo snapshot after rebuilding facts:
+
+```bash
+copy storage\financial_facts.json app_data\financial_facts.json
+```
+
 ## Run the App
 
 ```bash
@@ -67,6 +81,19 @@ streamlit run app.py
 ```
 
 Open `http://localhost:8501`.
+
+## Deploy
+
+This repository is ready for Streamlit Community Cloud:
+
+1. Push the repo to GitHub.
+2. Go to `https://share.streamlit.io`.
+3. Click **Create app**.
+4. Select repository `marcomarcotse/AlphaQuest-Finance-RAG`.
+5. Use branch `main` and entrypoint `app.py`.
+6. Pick a public app URL and deploy.
+
+The deployed app supports deterministic financial metric questions from the bundled facts. Narrative RAG questions need local vector storage and Ollama, so they are intentionally optional in public demo mode.
 
 ## Example Questions
 

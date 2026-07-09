@@ -3,9 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import streamlit as st
-from llama_index.core import PromptTemplate, Settings, StorageContext, load_index_from_storage
-from llama_index.embeddings.ollama import OllamaEmbedding
-from llama_index.llms.ollama import Ollama
 
 from finance_core import (
     FACT_STORE_PATH,
@@ -38,6 +35,13 @@ def load_rag_index():
     if not STORAGE_DIR.exists():
         return None
 
+    try:
+        from llama_index.core import Settings, StorageContext, load_index_from_storage
+        from llama_index.embeddings.ollama import OllamaEmbedding
+        from llama_index.llms.ollama import Ollama
+    except ImportError:
+        return None
+
     Settings.llm = Ollama(model="llama3", request_timeout=120.0)
     Settings.embed_model = OllamaEmbedding(model_name="llama3")
     storage_context = StorageContext.from_defaults(persist_dir=str(STORAGE_DIR))
@@ -45,6 +49,14 @@ def load_rag_index():
 
 
 def answer_with_rag(question: str) -> str:
+    try:
+        from llama_index.core import PromptTemplate
+    except ImportError:
+        return (
+            "I could not detect a supported financial metric in that question, "
+            "and the optional LlamaIndex RAG dependencies are not installed in this deployment."
+        )
+
     index = load_rag_index()
     if index is None:
         return (
